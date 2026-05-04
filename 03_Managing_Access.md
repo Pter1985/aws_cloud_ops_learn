@@ -85,7 +85,7 @@ AWS first denies any request that is explicitly denied, allows requests that are
 ### Federated access with IAM
 
 ![alt text](images/fad_access.png)  
-*example*
+_example_
 
 ## Implementing access paterns
 
@@ -126,3 +126,247 @@ Before you begin implementing IAM in your own environments, familiarize yourselv
 - Regularly rotate credentials.
 - Use multi-factor authentication.
 - Monitor and audit access patterns.
+
+## Strengthening Security with MFA
+
+With MFA users are required to provide 2 or more verification factors to gain access:
+
+- something you know (password or pin)
+- something you have (MFA device, mobile phone or hardware token)
+- something you are (biometric verification)
+
+### AWS MFA security Best practices
+
+- Enable MFA for your AWS root user (highest priority)
+- Enforce MFA for all IAM users with console access
+- Implement temporary security credentials with MFA for programmatic access
+- Require MFA for IAM role assumption, especially for roles with elevated privileges
+
+### MFA Tokens
+
+- Virtual MFA devices ( google authenticator)
+- FIDO security Keys ( yubikey)
+- Hardware TOTP tokens (yubikey)
+- SMS text-message-based MFA
+
+### Enforcing MFA with IAM Policies
+
+```json
+{
+   "Version": "2012-10-17",
+   "Statement": [
+       {
+           "Sid": "DenyAccessWithoutMFA",
+           "Effect": "Deny",
+           "Action": [
+               "s3:GetObject",
+               "s3:PutObject",
+               "s3:ListBucket",
+               "s3:DeleteObject"
+           ],
+           "Resource": [
+               "arn:aws:s3:::classified-documents-bucket",
+               "arn:aws:s3:::classified-documents-bucket/*",
+               "arn:aws:s3:::confidential-data-bucket",
+               "arn:aws:s3:::confidential-data-bucket/*"
+           ],
+           "Condition": {
+               "BoolIfExists": {
+                   "aws:MultiFactorAuthPresent": "false"
+               }
+           }
+       },
+       {
+           "Sid": "AllowBasicS3ListingForNavigation",
+           "Effect": "Allow",
+           "Action": [
+               "s3:ListAllMyBuckets",
+               "s3:GetBucketLocation"
+           ],
+           "Resource": "*"
+       }
+   ]
+}
+```
+
+### MFA for programmatic access
+
+Although console access can be protected with MFA during login, programmatic access by using AWS CLI, SDKs, or API calls presents unique challenges:
+
+- Access keys don't inherently support MFA verification.
+- Long-running applications need secure authentication.
+- Automation scripts can't prompt for MFA codes.  
+
+You can use AWS Security Token Service (AWS STS) to request temporary credentials that enforce MFA.
+Example:
+
+```
+aws sts get-session-token \
+--serial-number arn:aws:iam::123456789012:mfa/username \
+--token-code 123456 \
+--duration-seconds 43200
+```
+
+For this command to work, the IAM user must have MFA enabled and an MFA device already associated with their account.
+When this command runs, AWS STS verifies the following:
+
+- The IAM user making the request exists.
+- The MFA device specified by the serial number is associated with that user.
+- The token code provided is valid for the current time window.
+
+If verification succeeds, AWS STS returns a JSON response containing the following:
+
+- AccessKeyId: A new temporary access key ID
+- SecretAccessKey: A new temporary secret access key
+- SessionToken: A token that validates the temporary credentials
+- Expiration: The timestamp when these credentials will expire (in this case,12 hours later)
+
+These temporary credentials can then be used with AWS CLI commands or API calls, and they will have the same permissions as the IAM user who requested them.
+
+### MFA Delete
+
+Although IAM policies and standard MFA secure access to AWS resources, some AWS services have additional MFA settings for protection against destructive operations. Amazon Simple Storage Service (Amazon S3) MFA delete is a good example.  
+When enabled on an S3 bucket, MFA delete helps prevent accidental or unauthorized data loss. It requires both valid AWS credentials and a valid MFA code from an IAM registered device before changing the bucket's versioning state or permanently deleting object versions.
+
+## IAM Identity Center for Federated Access
+
+IAM Identity Center builds on AWS Identity and Access Management (IAM) to simplify access management to multiple AWS accounts, AWS applications, and other SAML-enabled cloud applications. In IAM Identity Center, you create or connect your workforce users for access across AWS. You can choose to manage access to only your AWS accounts, only your cloud applications, or both.
+
+### Key use cases for IAM Identity Center
+
+IAM Identity Center centralizes identity management and eliminates duplicate user management as your AWS environment grows. You can deploy it in two ways:
+
+- With AWS Organizations (recommended) to manage multiple accounts
+- As an account instance within a single AWS account when you need to support isolated application deployments
+
+As a best practice, enable AWS Organizations even with only one account. Doing so provides a foundation for future growth and enables the full capabilities of IAM Identity Center.
+
+## Advanced Access Control with Attributes and Tags
+
+### Using tags for attribute-based access control
+
+AWS IAM implements ABAC primarily through tags on principals and resources. ABAC dynamically controls access to AWS resources by using policy condition statements to compare principal tags with resource tags.  
+These attribute-based policies reduce the need to create separate policies for each principal-resource combination, simplifying permission management at scale.  
+
+![alt text](images/ABAC_example.png)
+_example of ABAC_
+
+### Attribute-based access control patterns
+
+Authorization patterns are standard approaches for designing IAM policy conditions that evaluate attributes to make access decisions. Common authorization patterns include the following:
+
+- Matching same-value tags across principals and resources
+- Requiring specific tag values
+- Checking for tag presence
+- Explicitly denying access based on tag values
+
+AWS services support tag-based access control differently. Amazon Elastic Compute Cloud (Amazon EC2), Amazon Relational Database Service (Amazon RDS), and Amazon DynamoDB allow direct tag comparison by using aws:ResourceTag.  
+Amazon Simple Storage Service (Amazon S3) requires alternative approaches, such as prefix-based permissions. Many services support resource policies that can evaluate principal tags for finer control.
+
+### Condition keys for tag-based authorization
+
+AWS provides two types of condition keys for use in IAM policies:
+
+| Global                                   | Service-specific                              |
+| ---------------------------------------- | --------------------------------------------- |
+| Available across all AWS services        | Unique to individual AWS services             |
+| **Format**: aws:{condition-name}         | **Format**: {service-prefix}:{condition-name} |
+| **Example**: aws:PrincipalTag/Department | **Example**: ec2:ResourceTag/Project          |
+
+### Key ABAC condition keys
+
+| Condition Key               | Description                                                                                                                                                                                         | Example                                                                                                                                                                    |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| aws:ResourceTag/{tag-key}   | This syntax compares a resource's tag value with a policy-specified value.                                                                                                                          | "aws:ResourceTag/Department": "Finance" checks if the resource has the Department tag with value Finance.                                                                  |
+| aws:PrincipalTag/{tag-key}  | This syntax compares the requesting principal's tag value with a policy-specified value.                                                                                                            | "aws:PrincipalTag/Department": "Finance" checks if the requesting user or role has the Department tag with value Finance.                                                  |
+| aws:RequestTag/{tag-key}    | This syntax verifies tag values in API requests that create or modify resources.                                                                                                                    | "aws:RequestTag/Environment": "Production" requires API requests that include the Environment tag with value Production.                                                   |
+| ${aws:PrincipalTag/tag-key} | This syntax represents a policy variable. Unlike the condition keys that compare against a fixed value, this variable dynamically references the value of a specific tag attached to the principal. | "arn:aws:s3:::amzn-s3-demo-bucket/${aws:PrincipalTag/team}/*" creates a dynamic path within the S3 bucket amzn-s3-demo-bucket based on the IAM principal's team tag value. |
+
+Example:
+
+```json
+"Condition": {
+ "StringEquals": {
+   "aws:ResourceTag/Project": "${aws:PrincipalTag/Project}"
+ }
+}
+```
+>[!Note]
+>Not all AWS services support the aws:ResourceTag condition key, and most use service-specific keys. Check AWS documentation for service-specific support for authorization based on tags.
+
+### Implementing ABAC by using tags
+
+1. Plan your tagging strategy
+2. Apply tags to resources
+3. Apply tags to IAM principals
+4. Create policies with tag conditions
+
+#### Example 1: Project based Amazon EC2 access control
+
+An example is Amazon EC2 instance management permissions for only resources with matching Project tags.
+
+```json
+{
+ "Version": "2012-10-17",
+ "Statement": [
+ {
+  "Effect": "Allow",
+  "Action": [
+    "ec2:StartInstances",
+    "ec2:StopInstances"
+  ],
+  "Resource": "*",
+  "Condition": {
+    "StringEquals": {
+      "aws:ResourceTag/Project": "${aws:PrincipalTag/Project}"
+    }
+  }
+ },
+ {
+  "Effect": "Allow",
+  "Action": "ec2:DescribeInstances",
+  "Resource": "*"
+ }
+ ]
+}
+```
+
+#### Example 2: Departement-based Amazon S3 access control
+
+Users can access S3 buckets named after their department (for example,  department-Finance).
+
+```json
+{
+ "Version": "2012-10-17",
+ "Statement": [
+ {
+ "Effect": "Allow",
+ "Action": [
+  "s3:GetObject",
+  "s3:PutObject"
+ ],
+ "Resource": [
+  "arn:aws:s3:::department-${aws:PrincipalTag/Department}/*"
+ ]
+ },
+ {
+ "Effect": "Allow",
+ "Action": "s3:ListBucket",
+ "Resource": "arn:aws:s3:::department-${aws:PrincipalTag/Department}"
+ },
+ {
+ "Effect": "Allow",
+ "Action": "s3:ListAllMyBuckets",
+ "Resource": "*"
+ }
+ ]
+}
+```
+
+### Best Practices for ABAC
+
+- Enforce tag constistency
+- Implement tag enforcement
+- Secure your tags
+- Test your policies
+- Understand service-specific ABAC limitations
