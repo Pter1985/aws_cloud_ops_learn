@@ -1,6 +1,6 @@
 # AWS Well Architectured Framework
 
-[[_TOC_]]
+[[TOC]]
 
 ## Pillars
 

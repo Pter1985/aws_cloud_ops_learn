@@ -3,7 +3,7 @@
 As a CloudOps engineer, a key aspect of managing your AWS environment is tagging.  
 Tagging is the process of assigning metadata in the form of key-value pairs to AWS resources.
 
-[[_TOC_]]
+[[TOC]]
 
 ## Why
 
